@@ -113,7 +113,7 @@ pub trait Parser<T: Send + Sync + Clone> {
 }
 
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Property {
     Simple(String),
     Map(HashMap<String, Property>)
@@ -185,15 +185,12 @@ impl Parser<Property> for Yaml {
             };
             node.ntype = NodeTypeTask;
             for (k, v) in h {
-                match (k.as_str(), v.as_str()) {
-                    (Some(key), Some(value)) => {
-                        if key == self.kwd_name() {
-                            node.name = Some(value);
-                        } else {
-                            node.properties.insert(key, Property::Simple(value.into()));
-                        }
-                    },
-                    _ => (),
+                if let Some(s) = k.as_str() {
+                    if s == self.kwd_name() && v.as_str().is_some() {
+                        node.name = Some(v.as_str().unwrap());
+                    }
+                    let property = create_property_from_yaml_hash(v);
+                    node.properties.insert(s.into(), property);
                 }
             }
             node.task = Some(task);
@@ -213,6 +210,30 @@ impl Parser<Property> for Yaml {
             return Some(node);
         }
         None
+    }
+}
+
+fn create_property_from_yaml_hash(yaml: &Yaml) -> Property {
+    match yaml {
+        Yaml::Real(s) => Property::Simple(s.into()),
+        Yaml::String(s) => Property::Simple(s.into()),
+        Yaml::Boolean(b) => Property::Simple(b.to_string()),
+        Yaml::Null => Property::Simple("null".into()),
+        Yaml::Hash(h) => {
+            let mut hashmap = HashMap::new();
+            for (k, v) in h {
+                if let Some(s) = k.as_str() {
+                    hashmap.insert(s.into(), create_property_from_yaml_hash(v));
+                }
+            }
+            Property::Map(hashmap)
+        }
+        _ => Property::Simple("".into()),
+        // TODO:
+        // Yaml::Alias(_) => {}
+        // Yaml::Integer(_) => {}
+        // Yaml::Array(_) => {}
+        // Yaml::BadValue => {}
     }
 }
 
@@ -243,7 +264,7 @@ fn main() {
         std::process::exit(1);
     }
     let mut root_node = root_node.unwrap();
-    println!("{}", root_node.pretty_print());
+    // println!("{}", pretty_print(&root_node));
 
 
     exec_shell("MY_ENV=\"test\" echo yooo: $MY_ENV");
