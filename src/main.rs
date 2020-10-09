@@ -24,11 +24,16 @@ fn load_yaml_from_file_with_context(
 
 #[derive(Clone)]
 pub struct ShellTask {}
-impl Task for ShellTask {
-    fn run<T: Send + Sync + Clone, U: Task + Clone>(&self, node_task: &Node<T, U>, global_context: &GlobalContext<T, U>)
-    -> (bool, Option<Vec<ContextDiff>>) {
+impl Task<Property> for ShellTask {
+    fn run<U: Task<Property> + Clone>(
+        &self,
+        node_task: &Node<Property, U>,
+        global_context: &GlobalContext<Property, U>,
+    ) -> (bool, Option<Vec<ContextDiff>>)
+    {
         // TODO: implement running a node's task string via shell command
-        (false, None)
+        println!("RUNNING TASK WITH PROPERTIES: {:?}", node_task.properties);
+        (true, None)
     }
 }
 
@@ -64,8 +69,8 @@ pub use ParserNodeType::*;
 pub trait Parser<T: Send + Sync + Clone> {
     // these are methods you must implement as a user
     fn get_node_type(&self) -> ParserNodeType;
-    fn create_task_node<'a, U: Task + Clone>(&'a self, task: &'a U) -> Option<Node<T, U>>;
-    fn collect_node_vec<'a, U: Task + Clone>(&'a self, task: &'a U, node_type: ParserNodeType) -> Vec<Node<T, U>>;
+    fn create_task_node<'a, U: Task<T> + Clone>(&'a self, task: &'a U) -> Option<Node<T, U>>;
+    fn collect_node_vec<'a, U: Task<T> + Clone>(&'a self, task: &'a U, node_type: ParserNodeType) -> Vec<Node<T, U>>;
 
     // these are methods you can implement if you
     // want to customize the behavior a little bit
@@ -77,7 +82,7 @@ pub trait Parser<T: Send + Sync + Clone> {
 
     // this is a method you should only implement if you want really
     // specific behavior. this default should work well in most cases
-    fn make_node<'a, U: Task + Clone>(&'a self, task: &'a U) -> Option<Node<T, U>> {
+    fn make_node<'a, U: Task<T> + Clone>(&'a self, task: &'a U) -> Option<Node<T, U>> {
         let node_type = self.get_node_type();
         if node_type == ParserNodeTypeParallel || node_type == ParserNodeTypeSeries {
             let mut node = Node {
@@ -153,7 +158,7 @@ impl Parser<Property> for Yaml {
         None
     }
 
-    fn collect_node_vec<'a, U: Task + Clone>(&'a self, task: &'a U, node_type: ParserNodeType) -> Vec<Node<Property, U>> {
+    fn collect_node_vec<'a, U: Task<Property> + Clone>(&'a self, task: &'a U, node_type: ParserNodeType) -> Vec<Node<Property, U>> {
         let kwd = if node_type == ParserNodeTypeParallel {
             self.kwd_parallel()
         } else if node_type == ParserNodeTypeSeries {
@@ -173,7 +178,7 @@ impl Parser<Property> for Yaml {
         }
         node_vec
     }
-    fn create_task_node<'a, U: Task + Clone>(&'a self, task: &'a U) -> Option<Node<Property, U>> {
+    fn create_task_node<'a, U: Task<Property> + Clone>(&'a self, task: &'a U) -> Option<Node<Property, U>> {
         if let Yaml::Hash(h) = self {
             let mut node = Node {
                 name: None,
@@ -253,7 +258,7 @@ fn main() {
     println!("MY YAML: {:?}", yaml);
 
     let mut task = ShellTask {};
-    let mut global_context: GlobalContext<&str, ShellTask> = GlobalContext {
+    let mut global_context: GlobalContext<Property, ShellTask> = GlobalContext {
         known_nodes: HashMap::new(),
         variables: HashMap::new(),
     };
@@ -264,6 +269,7 @@ fn main() {
         std::process::exit(1);
     }
     let mut root_node = root_node.unwrap();
+    run_node_helper(&root_node, &mut global_context);
     // println!("{}", pretty_print(&root_node));
 
 
