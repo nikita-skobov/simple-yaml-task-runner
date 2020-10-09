@@ -61,11 +61,11 @@ pub enum ParserNodeType {
     ParserNodeTypeKnown,
 }
 pub use ParserNodeType::*;
-pub trait Parser {
+pub trait Parser<T: Send + Sync + Clone> {
     // these are methods you must implement as a user
     fn get_node_type(&self) -> ParserNodeType;
-    fn create_task_node<'a, U: Task + Clone>(&'a self, task: &'a U) -> Option<Node<&str, U>>;
-    fn collect_node_vec<'a, U: Task + Clone>(&'a self, task: &'a U, node_type: ParserNodeType) -> Vec<Node<&str, U>>;
+    fn create_task_node<'a, U: Task + Clone>(&'a self, task: &'a U) -> Option<Node<T, U>>;
+    fn collect_node_vec<'a, U: Task + Clone>(&'a self, task: &'a U, node_type: ParserNodeType) -> Vec<Node<T, U>>;
 
     // these are methods you can implement if you
     // want to customize the behavior a little bit
@@ -77,7 +77,7 @@ pub trait Parser {
 
     // this is a method you should only implement if you want really
     // specific behavior. this default should work well in most cases
-    fn make_node<'a, U: Task + Clone>(&'a self, task: &'a U) -> Option<Node<&str, U>> {
+    fn make_node<'a, U: Task + Clone>(&'a self, task: &'a U) -> Option<Node<T, U>> {
         let node_type = self.get_node_type();
         if node_type == ParserNodeTypeParallel || node_type == ParserNodeTypeSeries {
             let mut node = Node {
@@ -112,7 +112,13 @@ pub trait Parser {
     }
 }
 
-impl Parser for Yaml {
+
+#[derive(Clone)]
+pub enum Property {
+    Simple(String),
+    Map(HashMap<String, Property>)
+}
+impl Parser<Property> for Yaml {
     fn get_node_type(&self) -> ParserNodeType {
         if yaml_hash_has_key(self, self.kwd_series()) {
             ParserNodeTypeSeries
@@ -147,7 +153,7 @@ impl Parser for Yaml {
         None
     }
 
-    fn collect_node_vec<'a, U: Task + Clone>(&'a self, task: &'a U, node_type: ParserNodeType) -> Vec<Node<'a, &str, U>> {
+    fn collect_node_vec<'a, U: Task + Clone>(&'a self, task: &'a U, node_type: ParserNodeType) -> Vec<Node<Property, U>> {
         let kwd = if node_type == ParserNodeTypeParallel {
             self.kwd_parallel()
         } else if node_type == ParserNodeTypeSeries {
@@ -167,7 +173,7 @@ impl Parser for Yaml {
         }
         node_vec
     }
-    fn create_task_node<'a, U: Task + Clone>(&'a self, task: &'a U) -> Option<Node<&str, U>> {
+    fn create_task_node<'a, U: Task + Clone>(&'a self, task: &'a U) -> Option<Node<Property, U>> {
         if let Yaml::Hash(h) = self {
             let mut node = Node {
                 name: None,
@@ -184,7 +190,7 @@ impl Parser for Yaml {
                         if key == self.kwd_name() {
                             node.name = Some(value);
                         } else {
-                            node.properties.insert(key, value);
+                            node.properties.insert(key, Property::Simple(value.into()));
                         }
                     },
                     _ => (),
@@ -202,7 +208,7 @@ impl Parser for Yaml {
                 continue_on_fail: false,
             };
             node.ntype = NodeTypeTask;
-            node.properties.insert(self.kwd_task(), s.as_str());
+            node.properties.insert(self.kwd_task(), Property::Simple(s.into()));
             node.task = Some(task);
             return Some(node);
         }
