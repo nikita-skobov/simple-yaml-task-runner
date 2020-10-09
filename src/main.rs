@@ -35,6 +35,8 @@ impl Task<Property> for ShellTask {
         let mut env_keys = vec![];
         let mut env_vals = vec![];
         let mut cmd_str = None;
+        let mut capture_stdout = None;
+        let mut capture_stderr = None;
         for (key, prop) in &node_task.properties {
             if *key == "env" {
                 if let Property::Map(m) = prop {
@@ -49,14 +51,31 @@ impl Task<Property> for ShellTask {
                 if let Property::Simple(s) = prop {
                     cmd_str = Some(s);
                 }
+            } else if *key == "capture_stdout" {
+                if let Property::Simple(s) = prop {
+                    capture_stdout = Some(s);
+                }
+            } else if *key == "capture_stderr" {
+                if let Property::Simple(s) = prop {
+                    capture_stderr = Some(s);
+                }
             }
         }
 
+        let mut diff_vec = vec![];
         if let Some(cmd_str) = cmd_str {
-            exec_shell(cmd_str, &env_keys[..], &env_vals[..]);
+            let (status, stdout, stderr) = exec_shell(
+                cmd_str, &env_keys[..], &env_vals[..]
+            );
+            if let Some(cap_stderr) = capture_stderr {
+                diff_vec.push(ContextDiff::CDSet(cap_stderr.into(), stderr));
+            }
+            if let Some(cap_stdout) = capture_stdout {
+                diff_vec.push(ContextDiff::CDSet(cap_stdout.into(), stdout));
+            }
         }
-
-        (true, None)
+        let diff_vec_opt = if diff_vec.len() > 0 { Some(diff_vec) } else { None };
+        (true, diff_vec_opt)
     }
 }
 
@@ -67,7 +86,11 @@ fn yaml_hash_has_key(yaml: &Yaml, key: &str) -> bool {
     }
 }
 
-fn exec_shell(cmd_str: &str, env_keys: &[&String], env_vals: &[&String]) {
+fn exec_shell(
+    cmd_str: &str,
+    env_keys: &[&String],
+    env_vals: &[&String],
+) -> (i32, String, String) {
     assert_eq!(env_vals.len(), env_keys.len());
 
     let mut cmd = Command::new("sh");
@@ -76,13 +99,9 @@ fn exec_shell(cmd_str: &str, env_keys: &[&String], env_vals: &[&String]) {
     }
     cmd.arg("-c").arg(cmd_str);
     let out = cmd.output().expect("something bad");
-    if out.status.success() {
-        let str_cow = String::from_utf8_lossy(&out.stdout);
-        println!("{}", str_cow);
-    } else {
-        let str_cow = String::from_utf8_lossy(&out.stderr);
-        println!("{}", str_cow);
-    }
+    let stdout_cow = String::from_utf8_lossy(&out.stdout);
+    let stderr_cow = String::from_utf8_lossy(&out.stderr);
+    (out.status.code().unwrap_or(1), stdout_cow.into(), stderr_cow.into())
 }
 
 
@@ -299,4 +318,5 @@ fn main() {
     let mut root_node = root_node.unwrap();
     run_node_helper(&root_node, &mut global_context);
     println!("{}", root_node.pretty_print());
+    println!("{:?}", global_context.variables);
 }
