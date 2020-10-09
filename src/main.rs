@@ -1,6 +1,9 @@
 use yaml_rust::Yaml;
 use yaml_variable_substitution::*;
 use abstract_pipeline_runner::*;
+use std::collections::HashMap;
+use std::process::Command;
+use std::process::ExitStatus;
 
 fn load_yaml_from_file_with_context(
     file_path: &str,
@@ -19,9 +22,10 @@ fn load_yaml_from_file_with_context(
     Ok(ydocs)
 }
 
+#[derive(Clone)]
 pub struct ShellTask {}
 impl Task for ShellTask {
-    fn run(&self, node_task: &Node, global_context: &GlobalContext)
+    fn run<T: Send + Sync + Clone, U: Task + Clone>(&self, node_task: &Node<T, U>, global_context: &GlobalContext<T, U>)
     -> (bool, Option<Vec<ContextDiff>>) {
         // TODO: implement running a node's task string via shell command
         (false, None)
@@ -35,6 +39,19 @@ fn yaml_hash_has_key(yaml: &Yaml, key: &str) -> bool {
     }
 }
 
+fn exec_shell(cmd_str: &str) {
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c").arg(cmd_str);
+    let out = cmd.output().expect("REEEE");
+    if out.status.success() {
+        let str_cow = String::from_utf8_lossy(&out.stdout);
+        println!("{}", str_cow);
+    } else {
+        let str_cow = String::from_utf8_lossy(&out.stderr);
+        println!("{}", str_cow);
+    }
+}
+
 
 #[derive(PartialEq, Copy, Clone)]
 pub enum ParserNodeType {
@@ -45,19 +62,32 @@ pub enum ParserNodeType {
 }
 pub use ParserNodeType::*;
 pub trait Parser {
+    // these are methods you must implement as a user
     fn get_node_type(&self) -> ParserNodeType;
-    fn create_task_node<'a>(&'a self, task: &'a dyn Task) -> Option<Node>;
-    fn collect_node_vec<'a>(&'a self, task: &'a dyn Task, node_type: ParserNodeType) -> Vec<Node>;
+    fn create_task_node<'a, U: Task + Clone>(&'a self, task: &'a U) -> Option<Node<&str, U>>;
+    fn collect_node_vec<'a, U: Task + Clone>(&'a self, task: &'a U, node_type: ParserNodeType) -> Vec<Node<&str, U>>;
 
+    // these are methods you can implement if you
+    // want to customize the behavior a little bit
     fn kwd_name(&self) -> &str { "name" }
     fn kwd_series(&self) -> &str { "series" }
     fn kwd_parallel(&self) -> &str { "parallel" }
     fn kwd_task(&self) -> &str { "task" }
     fn get_node_name<'a>(&'a self) -> Option<&'a str> { None }
-    fn make_node<'a>(&'a self, task: &'a dyn Task) -> Option<Node> {
+
+    // this is a method you should only implement if you want really
+    // specific behavior. this default should work well in most cases
+    fn make_node<'a, U: Task + Clone>(&'a self, task: &'a U) -> Option<Node<&str, U>> {
         let node_type = self.get_node_type();
         if node_type == ParserNodeTypeParallel || node_type == ParserNodeTypeSeries {
-            let mut node = Node::default();
+            let mut node = Node {
+                name: None,
+                is_root_node: false,
+                ntype: NodeTypeTask,
+                task: None,
+                properties: HashMap::new(),
+                continue_on_fail: false,
+            };
             node.name = self.get_node_name();
             let node_vec = self.collect_node_vec(task, node_type);
             node.ntype = if node_type == ParserNodeTypeParallel {
@@ -73,10 +103,15 @@ pub trait Parser {
             return self.create_task_node(task);
         }
 
-        // TODO: also implement adding a known node
+        // Known Nodes at the root should not be handles by the parser
+        // instead, use a seperate convenience method for collecting
+        // known nodes. This is because known nodes do not get put into
+        // the node hierarchy, but are rather stored seperately in a global
+        // context, to be accessed by any node in the hiearchy as needed
         None
     }
 }
+
 impl Parser for Yaml {
     fn get_node_type(&self) -> ParserNodeType {
         if yaml_hash_has_key(self, self.kwd_series()) {
@@ -112,7 +147,7 @@ impl Parser for Yaml {
         None
     }
 
-    fn collect_node_vec<'a>(&'a self, task: &'a dyn Task, node_type: ParserNodeType) -> Vec<Node<'a>> {
+    fn collect_node_vec<'a, U: Task + Clone>(&'a self, task: &'a U, node_type: ParserNodeType) -> Vec<Node<'a, &str, U>> {
         let kwd = if node_type == ParserNodeTypeParallel {
             self.kwd_parallel()
         } else if node_type == ParserNodeTypeSeries {
@@ -132,9 +167,16 @@ impl Parser for Yaml {
         }
         node_vec
     }
-    fn create_task_node<'a>(&'a self, task: &'a dyn Task) -> Option<Node> {
+    fn create_task_node<'a, U: Task + Clone>(&'a self, task: &'a U) -> Option<Node<&str, U>> {
         if let Yaml::Hash(h) = self {
-            let mut node = Node::default();
+            let mut node = Node {
+                name: None,
+                is_root_node: false,
+                ntype: NodeTypeTask,
+                task: None,
+                properties: HashMap::new(),
+                continue_on_fail: false,
+            };
             node.ntype = NodeTypeTask;
             for (k, v) in h {
                 match (k.as_str(), v.as_str()) {
@@ -151,9 +193,16 @@ impl Parser for Yaml {
             node.task = Some(task);
             return Some(node);
         } else if let Yaml::String(s) = self {
-            let mut node = Node::default();
+            let mut node = Node {
+                name: None,
+                is_root_node: false,
+                ntype: NodeTypeTask,
+                task: None,
+                properties: HashMap::new(),
+                continue_on_fail: false,
+            };
             node.ntype = NodeTypeTask;
-            node.properties.insert(self.kwd_task(), s);
+            node.properties.insert(self.kwd_task(), s.as_str());
             node.task = Some(task);
             return Some(node);
         }
@@ -177,7 +226,10 @@ fn main() {
     println!("MY YAML: {:?}", yaml);
 
     let mut task = ShellTask {};
-    let mut global_context = GlobalContext::default();
+    let mut global_context: GlobalContext<&str, ShellTask> = GlobalContext {
+        known_nodes: HashMap::new(),
+        variables: HashMap::new(),
+    };
     let mut root_node = yaml.make_node(&task);
 
     if root_node.is_none() {
@@ -186,4 +238,7 @@ fn main() {
     }
     let mut root_node = root_node.unwrap();
     println!("{}", root_node.pretty_print());
+
+
+    exec_shell("MY_ENV=\"test\" echo yooo: $MY_ENV");
 }
