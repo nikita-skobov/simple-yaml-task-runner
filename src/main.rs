@@ -32,7 +32,30 @@ impl Task<Property> for ShellTask {
     ) -> (bool, Option<Vec<ContextDiff>>)
     {
         // TODO: implement running a node's task string via shell command
-        println!("RUNNING TASK WITH PROPERTIES: {:?}", node_task.properties);
+        let mut env_keys = vec![];
+        let mut env_vals = vec![];
+        let mut cmd_str = None;
+        for (key, prop) in &node_task.properties {
+            if *key == "env" {
+                if let Property::Map(m) = prop {
+                    for (env_key, env_val) in m {
+                        if let Property::Simple(s) = env_val {
+                            env_keys.push(env_key);
+                            env_vals.push(s);
+                        }
+                    }
+                }
+            } else if *key == "task" {
+                if let Property::Simple(s) = prop {
+                    cmd_str = Some(s);
+                }
+            }
+        }
+
+        if let Some(cmd_str) = cmd_str {
+            exec_shell(cmd_str, &env_keys[..], &env_vals[..]);
+        }
+
         (true, None)
     }
 }
@@ -44,10 +67,15 @@ fn yaml_hash_has_key(yaml: &Yaml, key: &str) -> bool {
     }
 }
 
-fn exec_shell(cmd_str: &str) {
+fn exec_shell(cmd_str: &str, env_keys: &[&String], env_vals: &[&String]) {
+    assert_eq!(env_vals.len(), env_keys.len());
+
     let mut cmd = Command::new("sh");
+    for i in 0..env_keys.len() {
+        cmd.env(env_keys[i], env_vals[i]);
+    }
     cmd.arg("-c").arg(cmd_str);
-    let out = cmd.output().expect("REEEE");
+    let out = cmd.output().expect("something bad");
     if out.status.success() {
         let str_cow = String::from_utf8_lossy(&out.stdout);
         println!("{}", str_cow);
@@ -270,8 +298,5 @@ fn main() {
     }
     let mut root_node = root_node.unwrap();
     run_node_helper(&root_node, &mut global_context);
-    // println!("{}", pretty_print(&root_node));
-
-
-    exec_shell("MY_ENV=\"test\" echo yooo: $MY_ENV");
+    println!("{}", root_node.pretty_print());
 }
