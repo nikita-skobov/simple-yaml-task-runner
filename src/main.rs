@@ -1,5 +1,6 @@
 use yaml_rust::Yaml;
 use yaml_variable_substitution::*;
+use context_based_variable_substitution::*;
 use abstract_pipeline_runner::*;
 use std::collections::HashMap;
 use std::process::Command;
@@ -22,6 +23,20 @@ fn load_yaml_from_file_with_context(
     Ok(ydocs)
 }
 
+pub struct GCHolder<'a, T: Send + Sync + Clone, U: Task<T> + Clone> {
+    pub gc: &'a GlobalContext<'a, T, U>
+}
+impl<'a, T: Send + Sync + Clone, U: Task<T> + Clone> Context for GCHolder<'a, T, U> {
+    fn get_value_from_key(&self, key: &str, syntax_char: char) -> Option<String> {
+        // println!("SHOULD TRY TO FIND KEY: '{}', syntax_char: '{}'", key, syntax_char);
+        if self.gc.variables.contains_key(key) {
+            Some(self.gc.variables[key].clone())
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ShellTask {}
 impl Task<Property> for ShellTask {
@@ -37,13 +52,20 @@ impl Task<Property> for ShellTask {
         let mut cmd_str = None;
         let mut capture_stdout = None;
         let mut capture_stderr = None;
+        let gc_holder = GCHolder { gc: global_context };
         for (key, prop) in &node_task.properties {
             if *key == "env" {
                 if let Property::Map(m) = prop {
                     for (env_key, env_val) in m {
                         if let Property::Simple(s) = env_val {
-                            env_keys.push(env_key);
-                            env_vals.push(s);
+                            env_keys.push(env_key.into());
+                            env_vals.push(
+                            replace_all_from(
+                                s,
+                                &gc_holder,
+                                FailureMode::FM_ignore,
+                                Some("?"),
+                            ));
                         }
                     }
                 }
@@ -65,13 +87,13 @@ impl Task<Property> for ShellTask {
         let mut diff_vec = vec![];
         if let Some(cmd_str) = cmd_str {
             let (status, stdout, stderr) = exec_shell(
-                cmd_str, &env_keys[..], &env_vals[..]
+                cmd_str, env_keys, env_vals
             );
             if let Some(cap_stderr) = capture_stderr {
-                diff_vec.push(ContextDiff::CDSet(cap_stderr.into(), stderr));
+                diff_vec.push(ContextDiff::CDSet(cap_stderr.into(), stderr.trim().into()));
             }
             if let Some(cap_stdout) = capture_stdout {
-                diff_vec.push(ContextDiff::CDSet(cap_stdout.into(), stdout));
+                diff_vec.push(ContextDiff::CDSet(cap_stdout.into(), stdout.trim().into()));
             }
         }
         let diff_vec_opt = if diff_vec.len() > 0 { Some(diff_vec) } else { None };
@@ -88,14 +110,14 @@ fn yaml_hash_has_key(yaml: &Yaml, key: &str) -> bool {
 
 fn exec_shell(
     cmd_str: &str,
-    env_keys: &[&String],
-    env_vals: &[&String],
+    env_keys: Vec<String>,
+    env_vals: Vec<String>,
 ) -> (i32, String, String) {
     assert_eq!(env_vals.len(), env_keys.len());
 
     let mut cmd = Command::new("sh");
     for i in 0..env_keys.len() {
-        cmd.env(env_keys[i], env_vals[i]);
+        cmd.env(env_keys[i].as_str(), env_vals[i].as_str());
     }
     cmd.arg("-c").arg(cmd_str);
     let out = cmd.output().expect("something bad");
