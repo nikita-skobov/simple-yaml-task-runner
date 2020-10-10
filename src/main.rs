@@ -84,6 +84,23 @@ impl Task<Property> for ShellTask {
             }
         }
 
+        // before running it as a shell command,
+        // check if it exists in the global context known
+        // nodes. if so, then run that known node instead
+        if let Some(cmd_str) = cmd_str {
+            let cmd_exec = cmd_str.split(" ").nth(0);
+            if let Some(cmd_exec) = cmd_exec {
+                if global_context.known_nodes.contains_key(cmd_exec) {
+                    let node = &global_context.known_nodes[cmd_exec];
+                    let mut tmp_gc: GlobalContext<Property, U> = GlobalContext {
+                        known_nodes: HashMap::new(),
+                        variables: HashMap::new(),
+                    };
+                    return run_node_helper(&node, &mut tmp_gc);
+                }
+            }
+        }
+
         let mut diff_vec = vec![];
         if let Some(cmd_str) = cmd_str {
             let (status, stdout, stderr) = exec_shell(
@@ -127,7 +144,7 @@ fn exec_shell(
 }
 
 
-#[derive(PartialEq, Copy, Clone)]
+#[derive(PartialEq, Copy, Clone, Debug)]
 pub enum ParserNodeType {
     ParserNodeTypeSeries,
     ParserNodeTypeParallel,
@@ -177,8 +194,8 @@ pub trait Parser<T: Send + Sync + Clone> {
             return self.create_task_node(task);
         }
 
-        // Known Nodes at the root should not be handles by the parser
-        // instead, use a seperate convenience method for collecting
+        // Known Nodes at the root should not be handled by the parser.
+        // Instead, use a seperate convenience method for collecting
         // known nodes. This is because known nodes do not get put into
         // the node hierarchy, but are rather stored seperately in a global
         // context, to be accessed by any node in the hiearchy as needed
@@ -288,26 +305,33 @@ impl Parser<Property> for Yaml {
 }
 
 fn create_property_from_yaml_hash(yaml: &Yaml) -> Property {
-    match yaml {
-        Yaml::Real(s) => Property::Simple(s.into()),
-        Yaml::String(s) => Property::Simple(s.into()),
-        Yaml::Boolean(b) => Property::Simple(b.to_string()),
-        Yaml::Null => Property::Simple("null".into()),
-        Yaml::Hash(h) => {
-            let mut hashmap = HashMap::new();
-            for (k, v) in h {
-                if let Some(s) = k.as_str() {
-                    hashmap.insert(s.into(), create_property_from_yaml_hash(v));
-                }
+    if let Yaml::Hash(h) = yaml {
+        let mut hashmap = HashMap::new();
+        for (k, v) in h {
+            if let Some(s) = k.as_str() {
+                hashmap.insert(s.into(), create_property_from_yaml_hash(v));
             }
-            Property::Map(hashmap)
         }
-        _ => Property::Simple("".into()),
+        Property::Map(hashmap)
+    } else {
+        Property::Simple(get_yaml_key_as_string(yaml))
+    }
+}
+
+fn get_yaml_key_as_string(yaml: &Yaml) -> String {
+    match yaml {
+        Yaml::Real(s) => s.into(),
+        Yaml::Integer(i) => i.to_string(),
+        Yaml::String(s) => s.into(),
+        Yaml::Boolean(b) => b.to_string(),
+        Yaml::Null => "null".into(),
+
         // TODO:
-        // Yaml::Alias(_) => {}
-        // Yaml::Integer(_) => {}
         // Yaml::Array(_) => {}
+        // Yaml::Hash(_) => {}
+        // Yaml::Alias(_) => {}
         // Yaml::BadValue => {}
+        _ => "".into(),
     }
 }
 
@@ -324,7 +348,6 @@ fn main() {
 
     let yaml_vec = yaml_vec.unwrap();
     let yaml = &yaml_vec[0];
-    println!("MY YAML: {:?}", yaml);
 
     let mut task = ShellTask {};
     let mut global_context: GlobalContext<Property, ShellTask> = GlobalContext {
@@ -333,10 +356,40 @@ fn main() {
     };
     let mut root_node = yaml.make_node(&task);
 
+    // now we make the known nodes
+    let parallel_series_or_task = [
+        yaml.kwd_parallel(),
+        yaml.kwd_series(),
+        yaml.kwd_task(),
+    ];
+    // we assume that the root yaml is a hash
+    if let Yaml::Hash(h) = yaml {
+        for (k, v) in h {
+            let yaml_key = get_yaml_key_as_string(k);
+            // if we encounter a parallel, series, or task
+            // at the root, then that is not a known node, and that is
+            // probably the root node, so we skip it
+            if parallel_series_or_task.contains(&yaml_key.as_str()) {
+                continue;
+            }
+            // now we know we have a potential known node, so we check if it
+            // contains a valid kwd of task, parallel or series, if not,
+            // then this is not a node that can be visited, and is instead,
+            // probably some configuration node, or defaults, or something like that
+            if v.get_node_type() != ParserNodeTypeKnown {
+                let known_node = v.make_node(&task);
+                if let Some(known_node) = known_node {
+                    global_context.known_nodes.insert(yaml_key, known_node);
+                }
+            }
+        }
+    }
+
     if root_node.is_none() {
         println!("Failed to create node hierarchy from yaml");
         std::process::exit(1);
     }
+    println!("{:?}", global_context.known_nodes);
     let mut root_node = root_node.unwrap();
     run_node_helper(&root_node, &mut global_context);
     println!("{}", root_node.pretty_print());
