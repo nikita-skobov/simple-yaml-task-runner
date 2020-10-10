@@ -469,7 +469,12 @@ fn main() {
     }
     // println!("{:?}", global_context.known_nodes);
     let mut root_node = root_node.unwrap();
-    run_node_helper(&root_node, &mut global_context);
+    let (success, _) = run_node_helper(&root_node, &mut global_context);
+    let exit_code = match success {
+        true => 0,
+        false => 1,
+    };
+    std::process::exit(exit_code);
     // println!("{}", root_node.pretty_print());
     // println!("{:?}", global_context.variables);
 }
