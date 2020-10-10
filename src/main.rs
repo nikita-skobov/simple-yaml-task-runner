@@ -37,6 +37,23 @@ impl<'a, T: Send + Sync + Clone, U: Task<T> + Clone> Context for GCHolder<'a, T,
     }
 }
 
+pub struct NodeContext<'a, T: Send + Sync + Clone, U: Task<T> + Clone> {
+    pub gc_holder: GCHolder<'a, T, U>,
+    pub cmd_list: Vec<&'a str>,
+}
+impl<'a, T: Send + Sync + Clone, U: Task<T> + Clone> Context for NodeContext<'a, T, U> {
+    fn get_value_from_key(&self, key: &str, syntax_char: char) -> Option<String> {
+        // try first to get key from the cmd_list
+        let value_from_cmd = self.cmd_list.get_value_from_key(key, syntax_char);
+
+        match value_from_cmd {
+            Some(_) => value_from_cmd,
+            // if not found, default back to the global context
+            None => self.gc_holder.get_value_from_key(key, syntax_char),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ShellTask {}
 impl Task<Property> for ShellTask {
@@ -88,15 +105,66 @@ impl Task<Property> for ShellTask {
         // check if it exists in the global context known
         // nodes. if so, then run that known node instead
         if let Some(cmd_str) = cmd_str {
-            let cmd_exec = cmd_str.split(" ").nth(0);
+            let cmd_vec: Vec<&str> = cmd_str.split(" ").collect();
+            let cmd_exec = if cmd_vec.len() > 0 { Some(cmd_vec[0]) } else { None };
             if let Some(cmd_exec) = cmd_exec {
                 if global_context.known_nodes.contains_key(cmd_exec) {
                     let node = &global_context.known_nodes[cmd_exec];
-                    let mut tmp_gc: GlobalContext<Property, U> = GlobalContext {
-                        known_nodes: HashMap::new(),
-                        variables: HashMap::new(),
+                    // now that we detected a known node, we use that node
+                    // as a template for what we are about to run
+                    // first we need to fill in that node template with
+                    // the context of the current node we are on
+                    let mut node_clone = node.clone();
+                    let current_node_context = NodeContext {
+                        gc_holder,
+                        cmd_list: cmd_vec,
                     };
-                    return run_node_helper(&node, &mut tmp_gc);
+                    // this is bad, but for convenience, we will
+                    // assume that this node is a task, and
+                    // that it has properties... read the TODO comment below,
+                    // as that is how we should do it
+                    for (o_key, o_prop) in &node.properties {
+                        let new_prop = match o_prop {
+                            Property::Map(_) => o_prop.clone(),
+                            Property::Simple(s) => {
+                                let new_string = replace_all_from(
+                                    s.as_str(),
+                                    &current_node_context,
+                                    FailureMode::FM_ignore,
+                                    Some("?")
+                                );
+                                Property::Simple(new_string)
+                            }
+                        };
+                        node_clone.properties.insert(o_key, new_prop);
+                    }
+
+                    // TODO: make this a function that will visit every node
+                    // child of this node_clone, and fill in the properties
+                    // not just if its a root task
+                    // match node_clone.ntype {
+                    //     NodeTypeTask => {
+                    //         for (prop_name, mut prop) in node_clone.properties {
+                    //             match prop {
+                    //                 Property::Simple(mut s) => {
+                    //                     s = replace_all_from(
+                    //                         s.as_str(),
+                    //                         &current_node_context,
+                    //                         FailureMode::FM_ignore,
+                    //                         Some("?")
+                    //                     );
+                    //                 }
+                    //                 _ => (),
+                    //                 // TODO: iterate over this map, and do a
+                    //                 // replace for all values
+                    //                 // Property::Map(_) => {}
+                    //             }
+                    //         }
+                    //     }
+                    //     _ => (),
+                    // }
+
+                    return run_node_helper_immut(&node_clone, &global_context);
                 }
             }
         }
@@ -106,6 +174,7 @@ impl Task<Property> for ShellTask {
             let (status, stdout, stderr) = exec_shell(
                 cmd_str, env_keys, env_vals
             );
+            println!("{}", stdout);
             if let Some(cap_stderr) = capture_stderr {
                 diff_vec.push(ContextDiff::CDSet(cap_stderr.into(), stderr.trim().into()));
             }
@@ -389,9 +458,9 @@ fn main() {
         println!("Failed to create node hierarchy from yaml");
         std::process::exit(1);
     }
-    println!("{:?}", global_context.known_nodes);
+    // println!("{:?}", global_context.known_nodes);
     let mut root_node = root_node.unwrap();
     run_node_helper(&root_node, &mut global_context);
-    println!("{}", root_node.pretty_print());
-    println!("{:?}", global_context.variables);
+    // println!("{}", root_node.pretty_print());
+    // println!("{:?}", global_context.variables);
 }
