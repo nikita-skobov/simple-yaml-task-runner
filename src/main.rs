@@ -4,7 +4,11 @@ use context_based_variable_substitution::*;
 use abstract_pipeline_runner::*;
 use std::collections::HashMap;
 use std::process::Command;
-use std::process::ExitStatus;
+
+// TODO: use these and make nice output :)
+use ansi_term::Colour::Yellow;
+use ansi_term::Colour::Red;
+use ansi_term::Colour::Green;
 
 fn load_yaml_from_file_with_context(
     file_path: &str,
@@ -63,7 +67,6 @@ impl Task<Property> for ShellTask {
         global_context: &GlobalContext<Property, U>,
     ) -> (bool, Option<Vec<ContextDiff>>)
     {
-        // TODO: implement running a node's task string via shell command
         let mut env_keys = vec![];
         let mut env_vals = vec![];
         let mut cmd_str = None;
@@ -170,20 +173,26 @@ impl Task<Property> for ShellTask {
         }
 
         let mut diff_vec = vec![];
+        let mut success = true;
         if let Some(cmd_str) = cmd_str {
             let (status, stdout, stderr) = exec_shell(
                 cmd_str, env_keys, env_vals
             );
-            println!("{}", stdout);
+            if status != 0 {
+                success = false;
+            }
             if let Some(cap_stderr) = capture_stderr {
                 diff_vec.push(ContextDiff::CDSet(cap_stderr.into(), stderr.trim().into()));
             }
             if let Some(cap_stdout) = capture_stdout {
                 diff_vec.push(ContextDiff::CDSet(cap_stdout.into(), stdout.trim().into()));
+            } else {
+                // only print stdout if its not captured
+                println!("{}", stdout);
             }
         }
         let diff_vec_opt = if diff_vec.len() > 0 { Some(diff_vec) } else { None };
-        (true, diff_vec_opt)
+        (success, diff_vec_opt)
     }
 }
 
