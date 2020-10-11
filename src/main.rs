@@ -147,23 +147,9 @@ impl Task<Property> for ShellTask {
                         gc_holder,
                         cmd_list: cmd_vec,
                     };
-                    // this is bad, but for convenience, we will
-                    // assume that this node is a task, and
-                    // that it has properties... read the TODO comment below,
-                    // as that is how we should do it
+
                     for (o_key, o_prop) in &node.properties {
-                        let new_prop = match o_prop {
-                            Property::Map(_) => o_prop.clone(),
-                            Property::Simple(s) => {
-                                let new_string = replace_all_from(
-                                    s.as_str(),
-                                    &current_node_context,
-                                    FailureMode::FM_ignore,
-                                    Some("?")
-                                );
-                                Property::Simple(new_string)
-                            }
-                        };
+                        let new_prop = replace_property_with_context(o_prop, &current_node_context);
                         node_clone.properties.insert(o_key, new_prop);
                     }
 
