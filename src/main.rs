@@ -88,6 +88,35 @@ pub fn replace_property_with_context(
     }
 }
 
+pub fn fill_all_node_properties<U: Task<Property> + Clone>(
+    node: &mut Node<Property, U>,
+    context: &impl Context,
+) {
+    match node.ntype {
+        NodeTypeTask => {
+            let mut prop_keys = vec![];
+            for key in node.properties.keys() {
+                prop_keys.push(*key);
+            }
+            for key in prop_keys {
+                let prop = &node.properties[key];
+                let new_prop = replace_property_with_context(prop, context);
+                node.properties.insert(key, new_prop);
+            }
+        },
+        NodeTypeSeries(ref mut node_vec) => {
+            for n in node_vec {
+                fill_all_node_properties(n, context);
+            }
+        },
+        NodeTypeParallel(ref mut node_vec) => {
+            for n in node_vec {
+                fill_all_node_properties(n, context);
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ShellTask {}
 impl Task<Property> for ShellTask {
@@ -148,36 +177,7 @@ impl Task<Property> for ShellTask {
                         cmd_list: cmd_vec,
                     };
 
-                    for (o_key, o_prop) in &node.properties {
-                        let new_prop = replace_property_with_context(o_prop, &current_node_context);
-                        node_clone.properties.insert(o_key, new_prop);
-                    }
-
-                    // TODO: make this a function that will visit every node
-                    // child of this node_clone, and fill in the properties
-                    // not just if its a root task
-                    // match node_clone.ntype {
-                    //     NodeTypeTask => {
-                    //         for (prop_name, mut prop) in node_clone.properties {
-                    //             match prop {
-                    //                 Property::Simple(mut s) => {
-                    //                     s = replace_all_from(
-                    //                         s.as_str(),
-                    //                         &current_node_context,
-                    //                         FailureMode::FM_ignore,
-                    //                         Some("?")
-                    //                     );
-                    //                 }
-                    //                 _ => (),
-                    //                 // TODO: iterate over this map, and do a
-                    //                 // replace for all values
-                    //                 // Property::Map(_) => {}
-                    //             }
-                    //         }
-                    //     }
-                    //     _ => (),
-                    // }
-
+                    fill_all_node_properties(&mut node_clone, &current_node_context);
                     return run_node_helper_immut(&node_clone, &global_context);
                 }
             }
