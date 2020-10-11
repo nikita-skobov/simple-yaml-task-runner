@@ -14,6 +14,7 @@ pub const KWD_TASK: &str = "run";
 pub const KWD_ENV: &str = "env";
 pub const KWD_CAP_STDOUT: &str = "capture_stdout";
 pub const KWD_CAP_STDERR: &str = "capture_stderr";
+pub const KWD_DISPLAY: &str = "display";
 
 fn load_yaml_from_file_with_context(
     file_path: &str,
@@ -136,6 +137,11 @@ impl Task<Property> for ShellTask {
         let mut cmd_str = None;
         let mut capture_stdout = None;
         let mut capture_stderr = None;
+        // task display will default to being the name of the task
+        let mut task_display = match node_task.name {
+            Some(s) => Some(s.to_string()),
+            None => None,
+        };
         let gc_holder = GCHolder { gc: global_context };
         for (key, prop) in &node_task.properties {
             let replaced_prop = replace_property_with_context(prop, &gc_holder);
@@ -150,6 +156,11 @@ impl Task<Property> for ShellTask {
                 }
             } else if *key == KWD_TASK {
                 if let Property::Simple(s) = replaced_prop {
+                    // if there wasnt a task name, try setting it
+                    // to the actual string of the task
+                    if task_display.is_none() {
+                        task_display = Some(s.clone());
+                    }
                     cmd_str = Some(s);
                 }
             } else if *key == KWD_CAP_STDOUT {
@@ -159,6 +170,12 @@ impl Task<Property> for ShellTask {
             } else if *key == KWD_CAP_STDERR {
                 if let Property::Simple(s) = replaced_prop {
                     capture_stderr = Some(s);
+                }
+            } else if *key == KWD_DISPLAY {
+                // no matter what, if there's an explicit
+                // display key, use the display value
+                if let Property::Simple(s) = replaced_prop {
+                    task_display = Some(s);
                 }
             }
         }
@@ -181,8 +198,21 @@ impl Task<Property> for ShellTask {
                         gc_holder,
                         cmd_list: cmd_vec,
                     };
-
                     fill_all_node_properties(&mut node_clone, &current_node_context);
+
+                    // for this implementation of a pipeline runner,
+                    // I thought it'd be nice to display the original call
+                    // for the known_node, so we explicitly give this new node
+                    // a display: (this will only work if the node_clone is
+                    // a task node. otherwise, it does not make sense to iterate
+                    // over all its children and giving all of them a display prop)
+                    let display_text = cmd_str;
+                    node_clone.properties.insert(KWD_DISPLAY, Property::Simple(display_text.into()));
+
+                    // then return from the current task by calling the
+                    // run node helper seperately. this will still return
+                    // a success code and a list of diffs depending on what
+                    // the known node does
                     return run_node_helper_immut(&node_clone, &global_context);
                 }
             }
@@ -202,12 +232,16 @@ impl Task<Property> for ShellTask {
             }
             if let Some(cap_stdout) = capture_stdout {
                 diff_vec.push(ContextDiff::CDSet(cap_stdout.into(), stdout.trim().into()));
-            } else {
-                // only print stdout if its not captured
-                println!("{}", stdout);
             }
         }
         let diff_vec_opt = if diff_vec.len() > 0 { Some(diff_vec) } else { None };
+        if let Some(task_name) = task_display {
+            let color_text = match success {
+                true => Green.paint(task_name),
+                false => Red.paint(task_name),
+            };
+            println!("{}", color_text);
+        }
         (success, diff_vec_opt)
     }
 }
