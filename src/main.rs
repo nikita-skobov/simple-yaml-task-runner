@@ -10,6 +10,11 @@ use ansi_term::Colour::Yellow;
 use ansi_term::Colour::Red;
 use ansi_term::Colour::Green;
 
+pub const KWD_TASK: &str = "run";
+pub const KWD_ENV: &str = "env";
+pub const KWD_CAP_STDOUT: &str = "capture_stdout";
+pub const KWD_CAP_STDERR: &str = "capture_stderr";
+
 fn load_yaml_from_file_with_context(
     file_path: &str,
     context: Vec<String>
@@ -134,7 +139,7 @@ impl Task<Property> for ShellTask {
         let gc_holder = GCHolder { gc: global_context };
         for (key, prop) in &node_task.properties {
             let replaced_prop = replace_property_with_context(prop, &gc_holder);
-            if *key == "env" {
+            if *key == KWD_ENV {
                 if let Property::Map(m) = replaced_prop {
                     for (env_key, env_val) in m {
                         if let Property::Simple(s) = env_val {
@@ -143,15 +148,15 @@ impl Task<Property> for ShellTask {
                         }
                     }
                 }
-            } else if *key == "task" {
+            } else if *key == KWD_TASK {
                 if let Property::Simple(s) = replaced_prop {
                     cmd_str = Some(s);
                 }
-            } else if *key == "capture_stdout" {
+            } else if *key == KWD_CAP_STDOUT {
                 if let Property::Simple(s) = replaced_prop {
                     capture_stdout = Some(s);
                 }
-            } else if *key == "capture_stderr" {
+            } else if *key == KWD_CAP_STDERR {
                 if let Property::Simple(s) = replaced_prop {
                     capture_stderr = Some(s);
                 }
@@ -299,6 +304,14 @@ pub enum Property {
     Map(HashMap<String, Property>)
 }
 impl Parser<Property> for Yaml {
+    // modify the constants at the top
+    // of this file, if you want to customize
+    // the semantics of your pipeline file
+    fn kwd_task(&self) -> &str { KWD_TASK }
+    // TODO:
+    // potentially overwrite the other keywords
+
+
     fn get_node_type(&self) -> ParserNodeType {
         if yaml_hash_has_key(self, self.kwd_series()) {
             ParserNodeTypeSeries
