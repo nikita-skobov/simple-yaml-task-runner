@@ -32,7 +32,6 @@ pub struct GCHolder<'a, T: Send + Sync + Clone, U: Task<T> + Clone> {
 }
 impl<'a, T: Send + Sync + Clone, U: Task<T> + Clone> Context for GCHolder<'a, T, U> {
     fn get_value_from_key(&self, key: &str, syntax_char: char) -> Option<String> {
-        // println!("SHOULD TRY TO FIND KEY: '{}', syntax_char: '{}'", key, syntax_char);
         if self.gc.variables.contains_key(key) {
             Some(self.gc.variables[key].clone())
         } else {
@@ -58,6 +57,37 @@ impl<'a, T: Send + Sync + Clone, U: Task<T> + Clone> Context for NodeContext<'a,
     }
 }
 
+// take a reference to a real property
+// and return a property that has all
+// of its fields replaced via a provided context
+pub fn replace_property_with_context(
+    prop: &Property,
+    context: &impl Context,
+) -> Property {
+    match prop {
+        Property::Simple(s) => {
+            Property::Simple(
+                replace_all_from(
+                    s,
+                    context,
+                    FailureMode::FM_ignore,
+                    Some("?"),
+                )
+            )
+        }
+        Property::Map(m) => {
+            let mut new_hashmap = HashMap::new();
+            for (k, v) in m {
+                new_hashmap.insert(
+                    k.into(),
+                    replace_property_with_context(v, context),
+                );
+            }
+            Property::Map(new_hashmap)
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ShellTask {}
 impl Task<Property> for ShellTask {
@@ -74,31 +104,26 @@ impl Task<Property> for ShellTask {
         let mut capture_stderr = None;
         let gc_holder = GCHolder { gc: global_context };
         for (key, prop) in &node_task.properties {
+            let replaced_prop = replace_property_with_context(prop, &gc_holder);
             if *key == "env" {
-                if let Property::Map(m) = prop {
+                if let Property::Map(m) = replaced_prop {
                     for (env_key, env_val) in m {
                         if let Property::Simple(s) = env_val {
                             env_keys.push(env_key.into());
-                            env_vals.push(
-                            replace_all_from(
-                                s,
-                                &gc_holder,
-                                FailureMode::FM_ignore,
-                                Some("?"),
-                            ));
+                            env_vals.push(s);
                         }
                     }
                 }
             } else if *key == "task" {
-                if let Property::Simple(s) = prop {
+                if let Property::Simple(s) = replaced_prop {
                     cmd_str = Some(s);
                 }
             } else if *key == "capture_stdout" {
-                if let Property::Simple(s) = prop {
+                if let Property::Simple(s) = replaced_prop {
                     capture_stdout = Some(s);
                 }
             } else if *key == "capture_stderr" {
-                if let Property::Simple(s) = prop {
+                if let Property::Simple(s) = replaced_prop {
                     capture_stderr = Some(s);
                 }
             }
@@ -107,7 +132,7 @@ impl Task<Property> for ShellTask {
         // before running it as a shell command,
         // check if it exists in the global context known
         // nodes. if so, then run that known node instead
-        if let Some(cmd_str) = cmd_str {
+        if let Some(ref cmd_str) = cmd_str {
             let cmd_vec: Vec<&str> = cmd_str.split(" ").collect();
             let cmd_exec = if cmd_vec.len() > 0 { Some(cmd_vec[0]) } else { None };
             if let Some(cmd_exec) = cmd_exec {
@@ -176,7 +201,7 @@ impl Task<Property> for ShellTask {
         let mut success = true;
         if let Some(cmd_str) = cmd_str {
             let (status, stdout, stderr) = exec_shell(
-                cmd_str, env_keys, env_vals
+                cmd_str.as_str(), env_keys, env_vals
             );
             if status != 0 {
                 success = false;
