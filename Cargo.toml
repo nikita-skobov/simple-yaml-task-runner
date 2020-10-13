@@ -13,3 +13,7 @@ context_based_variable_substitution = { git = "https://github.com/nikita-skobov/
 yaml_variable_substitution = { git = "https://github.com/nikita-skobov/yaml-variable-substitution" }
 abstract_pipeline_runner = { git = "https://github.com/nikita-skobov/abstract-pipeline-runner" }
 ansi_term = "0.12"
+
+[[bin]]
+name = "sytr"
+path = "src/main.rs"

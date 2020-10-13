@@ -1,4 +1,4 @@
-# Simple yaml task runner
+# Simple yaml task runner (sytr)
 
 > a simple reference implementation to show the use of [abstract pipeline runner](https://github.com/nikita-skobov/abstract-pipeline-runner).
 
@@ -53,7 +53,7 @@ cargo build --release
 ## Running
 
 ```
-./target/release/simple-yaml-task-runner <path-to-yaml-file> [...context args]
+./target/release/sytr <path-to-yaml-file> [...context args]
 ```
 
 ## Please note
