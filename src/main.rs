@@ -3,7 +3,7 @@ use yaml_variable_substitution::*;
 use context_based_variable_substitution::*;
 use abstract_pipeline_runner::*;
 use abstract_pipeline_parsers::*;
-use abstract_pipeline_parsers::parsers::Property;
+use abstract_pipeline_parsers::parsers::yaml::*;
 use std::collections::HashMap;
 use std::process::Command;
 
