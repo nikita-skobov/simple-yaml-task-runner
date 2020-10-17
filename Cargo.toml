@@ -12,6 +12,7 @@ yaml-rust = "0.4"
 context_based_variable_substitution = { git = "https://github.com/nikita-skobov/context-based-variable-substitution" }
 yaml_variable_substitution = { git = "https://github.com/nikita-skobov/yaml-variable-substitution" }
 abstract_pipeline_runner = { git = "https://github.com/nikita-skobov/abstract-pipeline-runner" }
+abstract_pipeline_parsers = { git = "https://github.com/nikita-skobov/abstract-pipeline-parsers" }
 ansi_term = "0.12"
 
 [[bin]]
